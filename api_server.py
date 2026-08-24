@@ -238,3 +238,9 @@ async def buy_product(req: BuyRequest):
         "formatted_remaining_balance": format_price(new_bal),
         "delivered_items": delivered_data
     }
+
+@app.get("/", tags=["Health"])
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Health check endpoint for UptimeRobot 24/7 keep-alive monitoring."""
+    return {"status": "ok", "service": "LSH_Shop API & Telegram Bot", "active": True}

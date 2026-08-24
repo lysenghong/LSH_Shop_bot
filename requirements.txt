@@ -7,3 +7,4 @@ requests
 pillow
 python-dotenv
 bakong-khqr
+qrcode[pil]
