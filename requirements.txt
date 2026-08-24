@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-telegram-bot
+aiosqlite
+httpx
+requests
+pillow
+python-dotenv
+bakong-khqr
