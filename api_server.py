@@ -82,11 +82,6 @@ class BuyRequest(BaseModel):
     product_id: int
     quantity: Optional[int] = 1
 
-@app.get("/health")
-async def health_check():
-    """Keep-alive health endpoint for 24/7 Render hosting."""
-    return {"status": "ok", "service": "LSH_Shop API", "timestamp": os.getenv("PORT", "8085")}
-
 @app.get("/api/v1/user/info")
 async def get_user_info(api_key: str = Query(..., description="Your LSH_Shop API Key")):
     enforce_rate_limit(api_key)
@@ -239,8 +234,8 @@ async def buy_product(req: BuyRequest):
         "delivered_items": delivered_data
     }
 
-@app.get("/", tags=["Health"])
-@app.get("/health", tags=["Health"])
+@app.api_route("/", methods=["GET", "POST", "HEAD", "OPTIONS"], tags=["Health"])
+@app.api_route("/health", methods=["GET", "POST", "HEAD", "OPTIONS"], tags=["Health"])
 async def health_check():
     """Health check endpoint for UptimeRobot 24/7 keep-alive monitoring."""
     return {"status": "ok", "service": "LSH_Shop API & Telegram Bot", "active": True}
