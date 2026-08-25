@@ -733,9 +733,11 @@ async def generate_and_send_deposit_qr(update: Update, telegram_id: int, amount:
     user = await get_user_by_telegram_id(telegram_id)
     account_id = await get_setting("bakong_account_id", "ngim_bunrith1@bkrt")
     merchant_name = await get_setting("bakong_merchant_name", "BUNRITH NGIM")
+    from config import BAKONG_TOKEN
+    token = await get_setting("bakong_token", BAKONG_TOKEN)
     
-    qr_str = create_emvco_khqr(account_id, merchant_name, "Phnom Penh", amount, "USD")
-    md5_hash = generate_md5(qr_str)
+    qr_str = create_emvco_khqr(account_id, merchant_name, "Phnom Penh", amount, "USD", bakong_token=token)
+    md5_hash = generate_md5(qr_str, bakong_token=token)
     dep_id = await create_deposit(user["id"], amount, md5_hash, qr_str)
     
     filename = f"khqr_{dep_id}.png"
@@ -769,17 +771,32 @@ async def generate_and_send_deposit_qr(update: Update, telegram_id: int, amount:
     asyncio.create_task(deposit_countdown_timer(msg, amount, dep_id, merchant_name, account_id))
 
     # Send instant alert to Admin Telegram for 1-click manual approval
+    user_tg_id = user['telegram_id']
+    username = user.get('username', '')
+    first_name = user.get('first_name', '') or 'User'
+
+    if username:
+        user_link = f"<a href='https://t.me/{username}'>@{username}</a> ({first_name})"
+        chat_url = f"https://t.me/{username}"
+    else:
+        user_link = f"<a href='tg://user?id={user_tg_id}'>{first_name}</a>"
+        chat_url = f"tg://user?id={user_tg_id}"
+
     admin_msg = (
         f"📥 <b>សំណើដាក់ប្រាក់ KHQR ថ្មី! (Deposit #{dep_id})</b>\n\n"
-        f"👤 <b>អតិថិជន:</b> {user.get('first_name') or user.get('username') or 'User'} (ID: <code>{user['telegram_id']}</code>)\n"
+        f"👤 <b>អតិថិជន:</b> {user_link}\n"
+        f"🆔 <b>Telegram ID:</b> <code>{user_tg_id}</code>\n"
         f"💵 <b>ចំនួនប្រាក់:</b> <code>{format_price(amount)} USD</code>\n"
         f"🕒 <b>ស្ថានភាព:</b> <code>PENDING</code>\n\n"
-        f"💡 <i>ប្រសិនបើអតិថិជនបាន Scan វេរប្រាក់រួច លោកអ្នកអាចចុចប៊ូតុងខាងក្រោមដើម្បីអនុម័តបញ្ចូលប្រាក់ភ្លាមៗ ៖</i>"
+        f"💡 <i>ប្រសិនបើអតិថិជនបាន Scan វេរប្រាក់រួច លោកអ្នកអាចចុចប៊ូតុងខាងក្រោមដើម្បីអនុម័ត ឬចុច Chat ទៅកាន់ម៉ូយ ៖</i>"
     )
     admin_kb = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(f"✅ អនុម័ត {format_price(amount)}", callback_data=f"admin_approve_dep_{dep_id}"),
             InlineKeyboardButton("❌ បដិសេធ", callback_data=f"admin_reject_dep_{dep_id}")
+        ],
+        [
+            InlineKeyboardButton("💬 Chat ជាមួយម៉ូយម្នាក់នេះ", url=chat_url)
         ]
     ])
     for admin_id in ADMIN_IDS:

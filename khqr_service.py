@@ -8,35 +8,56 @@ try:
 except ImportError:
     KHQR = None
 
-khqr_sdk = KHQR() if KHQR else None
+def crc16_ccitt(data: str) -> str:
+    crc = 0xFFFF
+    for char in data.encode('utf-8'):
+        crc ^= (char << 8)
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = (crc << 1) ^ 0x1021
+            else:
+                crc = crc << 1
+            crc &= 0xFFFF
+    return f"{crc:04X}"
 
-def create_emvco_khqr(account_id: str, merchant_name: str, merchant_city: str, amount: float, currency: str = "USD", bill_number: str = None, expiration_minutes: int = 10) -> str:
+def create_emvco_khqr(account_id: str, merchant_name: str, merchant_city: str, amount: float, currency: str = "USD", bill_number: str = None, expiration_minutes: int = 10, bakong_token: str = "") -> str:
     """Generates 100% official Bakong KHQR String using National Bank of Cambodia (NBC) KHQR SDK with 10-minute expiration."""
     if not bill_number:
         bill_number = f"BILL{int(time.time())}"
         
-    try:
-        qr_str = khqr_sdk.create_qr(
-            account_id=account_id,
-            merchant_name=merchant_name[:25],
-            merchant_city=merchant_city[:15],
-            amount=float(amount),
-            currency=currency.upper(),
-            bill_number=bill_number[:25],
-            expiration=expiration_minutes
-        )
-        return qr_str
-    except Exception as e:
-        print(f"Error using bakong_khqr SDK: {e}")
-        # Fallback EMVCo formatting
-        return f"00020101021229220018{account_id}520459995303840540{amount:.2f}5802KH5912{merchant_name[:12]}6010{merchant_city[:10]}62120108{bill_number[:8]}6304ABCD"
+    clean_token = (bakong_token or "").strip().strip("'\"")
+    if KHQR and clean_token:
+        try:
+            sdk = KHQR(clean_token)
+            qr_str = sdk.create_qr(
+                account_id=account_id,
+                merchant_name=merchant_name[:25],
+                merchant_city=merchant_city[:15],
+                amount=float(amount),
+                currency=currency.upper(),
+                bill_number=bill_number[:25],
+                expiration=expiration_minutes
+            )
+            if qr_str:
+                return qr_str
+        except Exception as e:
+            print(f"[Bakong SDK create_qr Error]: {e}")
 
-def generate_md5(qr_string: str) -> str:
+    # Fallback EMVCo formatting with valid CRC16 CCITT
+    raw = f"00020101021229220018{account_id}520459995303840540{amount:.2f}5802KH5912{merchant_name[:12]}6010{merchant_city[:10]}62120108{bill_number[:8]}6304"
+    return raw + crc16_ccitt(raw)
+
+def generate_md5(qr_string: str, bakong_token: str = "") -> str:
     """Generates MD5 hash of the KHQR string using official Bakong SDK or hashlib."""
-    try:
-        return khqr_sdk.generate_md5(qr_string)
-    except Exception:
-        return hashlib.md5(qr_string.encode('utf-8')).hexdigest()
+    clean_token = (bakong_token or "").strip().strip("'\"")
+    if KHQR and clean_token:
+        try:
+            sdk = KHQR(clean_token)
+            return sdk.generate_md5(qr_string)
+        except Exception as e:
+            print(f"[Bakong SDK generate_md5 Error]: {e}")
+            
+    return hashlib.md5(qr_string.encode('utf-8')).hexdigest()
 
 def draw_qr_fallback(qr_string: str, filename: str = "khqr.png", amount: float = 0.0, merchant_name: str = "BUNRITH NGIM", account_id: str = "ngim_bunrith1@bkrt"):
     """
@@ -84,13 +105,14 @@ def check_bakong_transaction(md5_hash: str, bakong_token: str) -> bool:
     clean_md5 = str(md5_hash).strip()
     
     # 1. Try official bakong_khqr SDK check_payment if available
-    if khqr_sdk:
+    if KHQR:
         try:
-            res = khqr_sdk.check_payment(clean_md5, clean_token)
+            sdk_instance = KHQR(clean_token)
+            res = sdk_instance.check_payment(clean_md5)
             if res and (res.get("status") == "SUCCESS" or str(res.get("responseCode")) == "0"):
                 return True
-        except Exception as e:
-            print(f"[Bakong SDK Check Error]: {e}")
+        except Exception:
+            pass
 
     # 2. Direct HTTP API fallback with full Anti-WAF headers
     url = "https://api-bakong.nbc.gov.kh/v1/check_transaction_by_md5"
@@ -108,10 +130,9 @@ def check_bakong_transaction(md5_hash: str, bakong_token: str) -> bool:
             data_field = res_data.get("data")
             
             if response_code == "0" or (isinstance(data_field, dict) and data_field.get("status") == "SUCCESS"):
-                print(f"[Bakong API Success]: Transaction {clean_md5[:8]} verified!")
+                print(f"🎉 [Bakong API Success]: Transaction {clean_md5[:8]} verified!")
                 return True
-            else:
-                print(f"[Bakong API Response]: Code={response_code}, Data={data_field}")
+            # Code 1 means transaction is still PENDING / Unpaid (Normal status while waiting for scan)
         else:
             print(f"[Bakong API HTTP Error {response.status_code}]: {response.text[:200]}")
     except Exception as e:
