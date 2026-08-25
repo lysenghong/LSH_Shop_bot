@@ -12,7 +12,7 @@ from telegram.request import HTTPXRequest
 
 from config import BOT_TOKEN, ADMIN_IDS
 from database import (
-    init_db, get_or_create_user, get_user_by_telegram_id, find_user_by_any,
+    init_db, get_or_create_user, get_user_by_telegram_id, get_user_by_db_id, find_user_by_any,
     update_user_balance, regenerate_api_key, get_active_products, get_all_products,
     get_product_by_id, add_product, update_product_price, delete_product, toggle_product_status,
     create_order, get_user_orders, create_deposit, get_pending_deposits, get_deposit_by_id, mark_deposit_paid, cancel_deposit,
@@ -171,6 +171,49 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await query.answer("❌ បង្កាន់ដៃនេះមិនអាចបោះបង់បានឡើយ!", show_alert=True)
         
+    elif data.startswith("admin_approve_dep_"):
+        if user_id not in ADMIN_IDS:
+            await query.answer("❌ លោកអ្នកគ្មានសិទ្ធិអនុវត្តមុខងារនេះទេ!", show_alert=True)
+            return
+        dep_id = int(data.split("_")[-1])
+        dep = await get_deposit_by_id(dep_id)
+        if dep and dep["status"] == "PENDING":
+            await mark_deposit_paid(dep["id"])
+            new_bal = await update_user_balance(dep["user_id"], dep["amount"])
+            await query.answer("✅ បានអនុម័តប្រាក់ជោគជ័យ!", show_alert=True)
+            approved_text = (
+                f"✅ <b>បានអនុម័តប្រាក់ KHQR Deposit #{dep_id} ជោគជ័យ!</b>\n\n"
+                f"💵 <b>ចំនួនប្រាក់:</b> <code>{format_price(dep['amount'])} USD</code>\n"
+                f"💳 <b>តុល្យភាពថ្មីរបស់ម៉ូយ:</b> <code>{format_price(new_bal)} USD</code>"
+            )
+            await query.edit_message_text(approved_text, parse_mode="HTML")
+            
+            notify_text = (
+                f"🎉 <b>ទទួលបានប្រាក់ទូទាត់ជោគជ័យ!</b>\n\n"
+                f"💵 <b>ប្រាក់ដាក់ចូល:</b> <code>+{format_price(dep['amount'])} USD</code>\n"
+                f"💳 <b>តុល្យភាពលុយថ្មី:</b> <code>{format_price(new_bal)} USD</code>\n\n"
+                f"អរគុណសម្រាប់ការប្រើប្រាស់សេវាកម្ម <b>LSH_Shop Bot</b>!"
+            )
+            try:
+                user_obj = await get_user_by_db_id(dep["user_id"])
+                if user_obj:
+                    await context.bot.send_message(chat_id=user_obj["telegram_id"], text=notify_text, parse_mode="HTML")
+            except Exception as e:
+                print(f"Failed to notify user: {e}")
+        else:
+            await query.answer("⚠️ បង្កាន់ដៃនេះត្រូវបានអនុម័ត ឬបោះបង់រួចហើយ!", show_alert=True)
+
+    elif data.startswith("admin_reject_dep_"):
+        if user_id not in ADMIN_IDS:
+            await query.answer("❌ លោកអ្នកគ្មានសិទ្ធិអនុវត្តមុខងារនេះទេ!", show_alert=True)
+            return
+        dep_id = int(data.split("_")[-1])
+        dep = await get_deposit_by_id(dep_id)
+        if dep and dep["status"] == "PENDING":
+            await cancel_deposit(dep_id)
+            await query.answer("❌ បានបដិសេធបង្កាន់ដៃជោគជ័យ!", show_alert=True)
+            await query.edit_message_text(f"❌ <b>បានបដិសេធបង្កាន់ដៃ Deposit #{dep_id}</b>", parse_mode="HTML")
+
     # --- ADMIN CALLBACKS ---
     elif data == "admin_live_categories":
         await show_admin_categories(query)
@@ -724,6 +767,26 @@ async def generate_and_send_deposit_qr(update: Update, telegram_id: int, amount:
         
     # Start live countdown timer on this message
     asyncio.create_task(deposit_countdown_timer(msg, amount, dep_id, merchant_name, account_id))
+
+    # Send instant alert to Admin Telegram for 1-click manual approval
+    admin_msg = (
+        f"📥 <b>សំណើដាក់ប្រាក់ KHQR ថ្មី! (Deposit #{dep_id})</b>\n\n"
+        f"👤 <b>អតិថិជន:</b> {user.get('first_name') or user.get('username') or 'User'} (ID: <code>{user['telegram_id']}</code>)\n"
+        f"💵 <b>ចំនួនប្រាក់:</b> <code>{format_price(amount)} USD</code>\n"
+        f"🕒 <b>ស្ថានភាព:</b> <code>PENDING</code>\n\n"
+        f"💡 <i>ប្រសិនបើអតិថិជនបាន Scan វេរប្រាក់រួច លោកអ្នកអាចចុចប៊ូតុងខាងក្រោមដើម្បីអនុម័តបញ្ចូលប្រាក់ភ្លាមៗ ៖</i>"
+    )
+    admin_kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"✅ អនុម័ត {format_price(amount)}", callback_data=f"admin_approve_dep_{dep_id}"),
+            InlineKeyboardButton("❌ បដិសេធ", callback_data=f"admin_reject_dep_{dep_id}")
+        ]
+    ])
+    for admin_id in ADMIN_IDS:
+        try:
+            await update.get_bot().send_message(chat_id=admin_id, text=admin_msg, parse_mode="HTML", reply_markup=admin_kb)
+        except Exception as e:
+            print(f"Failed to alert admin of new deposit: {e}")
 
 # Admin Command (/admin)
 async def admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):

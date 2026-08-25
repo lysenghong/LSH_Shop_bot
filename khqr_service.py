@@ -75,27 +75,46 @@ def draw_qr_fallback(qr_string: str, filename: str = "khqr.png", amount: float =
 def check_bakong_transaction(md5_hash: str, bakong_token: str) -> bool:
     """
     Checks Bakong API transaction status using official Bakong check_payment API.
+    Supports clean token parsing and anti-WAF headers for Cloud/Render environments.
     """
-    try:
-        # Use official bakong_khqr SDK check_payment if token provided
-        res = khqr_sdk.check_payment(md5_hash, bakong_token)
-        if res and (res.get("status") == "SUCCESS" or str(res.get("responseCode")) == "0"):
-            return True
-    except Exception:
-        pass
+    if not bakong_token or not md5_hash:
+        return False
+        
+    clean_token = str(bakong_token).strip().strip("'\"")
+    clean_md5 = str(md5_hash).strip()
+    
+    # 1. Try official bakong_khqr SDK check_payment if available
+    if khqr_sdk:
+        try:
+            res = khqr_sdk.check_payment(clean_md5, clean_token)
+            if res and (res.get("status") == "SUCCESS" or str(res.get("responseCode")) == "0"):
+                return True
+        except Exception as e:
+            print(f"[Bakong SDK Check Error]: {e}")
 
-    # Direct HTTP API fallback
+    # 2. Direct HTTP API fallback with full Anti-WAF headers
     url = "https://api-bakong.nbc.gov.kh/v1/check_transaction_by_md5"
     headers = {
-        "Authorization": f"Bearer {bakong_token}",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {clean_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     try:
-        response = requests.post(url, json={"md5": md5_hash}, headers=headers, timeout=10)
+        response = requests.post(url, json={"md5": clean_md5}, headers=headers, timeout=12)
         if response.status_code == 200:
             res_data = response.json()
-            if str(res_data.get("responseCode")) == "0" or (isinstance(res_data.get("data"), dict) and res_data["data"].get("status") == "SUCCESS"):
+            response_code = str(res_data.get("responseCode", ""))
+            data_field = res_data.get("data")
+            
+            if response_code == "0" or (isinstance(data_field, dict) and data_field.get("status") == "SUCCESS"):
+                print(f"[Bakong API Success]: Transaction {clean_md5[:8]} verified!")
                 return True
+            else:
+                print(f"[Bakong API Response]: Code={response_code}, Data={data_field}")
+        else:
+            print(f"[Bakong API HTTP Error {response.status_code}]: {response.text[:200]}")
     except Exception as e:
-        print(f"Error checking Bakong transaction: {e}")
+        print(f"[Bakong API Connection Error]: {e}")
+        
     return False
