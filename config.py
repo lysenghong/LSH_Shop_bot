@@ -26,5 +26,6 @@ BAKONG_MERCHANT_CITY = os.getenv("BAKONG_MERCHANT_CITY", "Phnom Penh")
 
 # Database & API Server Config
 DB_FILE = os.getenv("DB_FILE", "lsh_shop.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("PORT", "8085"))
